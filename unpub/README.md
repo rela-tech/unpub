@@ -140,6 +140,69 @@ dart pub get
 dart run tool/migrate.dart --mongo mongodb://localhost:27017/dart_pub --sqlite /path/to/unpub.db
 ```
 
+#### Production-safe migration (no port exposure)
+
+To avoid exposing your production MongoDB port, use `mongodump`/`mongorestore`:
+
+1. On your production server, dump MongoDB data **inside the container**:
+   ```sh
+   docker exec unpub-mongo mongodump --db dart_pub --out /dump
+   docker cp unpub-mongo:/dump ./mongo-dump
+   tar -czf mongo-dump.tar.gz mongo-dump
+   ```
+
+2. On your local machine, restore into a temporary MongoDB container:
+   ```sh
+   docker run -d -p 27017:27017 --name temp-mongo mongo:6.0 mongod --bind_ip_all
+   docker cp ./mongo-dump temp-mongo:/dump
+   docker exec temp-mongo mongorestore /dump
+   ```
+
+3. Run the migration tool against the local temp MongoDB:
+   ```sh
+   dart run tool/migrate.dart --mongo mongodb://localhost:27017/dart_pub --sqlite unpub.db
+   ```
+
+4. Build and deploy your new SQLite-based Docker image (see below).
+
+## Deployment
+
+### Docker Compose
+
+A ready-to-use `docker-compose.yml` is provided in the root of this repo:
+
+```yaml
+version: '3.8'
+
+services:
+  unpub:
+    image: unpub:latest
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./unpub.db:/data/unpub.db
+      - ./unpub-packages:/data/unpub-packages
+    environment:
+      - PUB_HOSTED_URL=http://unpub:4000
+    command: >
+      --database /data/unpub.db
+      --uploader-email admin@company.com
+      --upload-token prod-secret
+      --host 0.0.0.0
+      --port 4000
+```
+
+Then run:
+
+```sh
+docker compose up -d
+```
+
+Your unpub instance will be available at `http://localhost:4000`.
+
+For production, add nginx reverse proxy (HTTPS, rate limiting) — see `nginx.conf.example`.
+
 ## Configuring Dart Pub Client
 
 Set the `PUB_HOSTED_URL` environment variable in your shell profile (`.bashrc`, `.zshrc`, or `config.fish`):

@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  unpub:
+    image: unpub:latest
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./unpub.db:/data/unpub.db
+      - ./unpub-packages:/data/unpub-packages
+    environment:
+      - PUB_HOSTED_URL=http://unpub:4000
+    command: >
+      --database /data/unpub.db
+      --uploader-email admin@company.com
+      --upload-token prod-secret
+      --host 0.0.0.0
+      --port 4000
+
+  # Optional: nginx reverse proxy with HTTPS and rate limiting
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf
+  #     - ./ssl:/etc/nginx/ssl
+  #   depends_on:
+  #     - unpub
