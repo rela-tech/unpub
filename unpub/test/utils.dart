@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:path/path.dart' as path;
 import 'package:http/http.dart' as http;
 import 'package:unpub/unpub.dart' as unpub;
@@ -28,6 +29,22 @@ Future<(HttpServer, unpub.SqliteStore)> createServer(String opEmail) async {
   return (server, sqliteStore);
 }
 
+/// Create a server with upload token authentication.
+Future<(HttpServer, unpub.SqliteStore)> createServerWithToken(
+    String opEmail, String token) async {
+  var sqliteStore = await unpub.SqliteStore.open(':memory:');
+
+  var app = unpub.App(
+    metaStore: sqliteStore,
+    packageStore: unpub.FileStore(baseDir),
+    overrideUploaderEmail: opEmail,
+    uploadToken: token,
+  );
+
+  var server = await app.serve('0.0.0.0', 4000);
+  return (server, sqliteStore);
+}
+
 Future<http.Response> getVersions(String package) {
   package = Uri.encodeComponent(package);
   return http.get(baseUri.resolve('/api/packages/$package'));
@@ -46,16 +63,25 @@ Future<ProcessResult> pubPublish(String name, String version) {
 }
 
 /// Add an uploader via the HTTP API directly.
-Future<http.Response> addUploaderHttp(String name, String email) {
+Future<http.Response> addUploaderHttp(String name, String email,
+    {String? token}) {
+  final headers = <String, String>{};
+  if (token != null) headers[HttpHeaders.authorizationHeader] = 'Bearer $token';
   return http.post(
     baseUri.resolve('/api/packages/$name/uploaders'),
     body: 'email=$email',
+    headers: headers,
   );
 }
 
 /// Remove an uploader via the HTTP API directly.
-Future<http.Response> removeUploaderHttp(String name, String email) {
+Future<http.Response> removeUploaderHttp(String name, String email,
+    {String? token}) {
+  final headers = <String, String>{};
+  if (token != null) headers[HttpHeaders.authorizationHeader] = 'Bearer $token';
   return http.delete(
-    baseUri.resolve('/api/packages/$name/uploaders/${Uri.encodeComponent(email)}'),
+    baseUri.resolve(
+        '/api/packages/$name/uploaders/${Uri.encodeComponent(email)}'),
+    headers: headers,
   );
 }

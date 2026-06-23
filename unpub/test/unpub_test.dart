@@ -399,6 +399,59 @@ main() {
     });
   });
 
+  group('upload token auth', () {
+    const token = 'secret123';
+
+    setUpAll(() async {
+      var result = await createServerWithToken(email0, token);
+      _server = result.$1;
+      _store = result.$2;
+      // Manual insert (skips auth — tests the auth layer, not the insert)
+      await _store.addVersion(
+        package0,
+        UnpubVersion(
+          '0.0.1',
+          {'name': package0, 'version': '0.0.1'},
+          null,
+          email0,
+          null,
+          null,
+          DateTime.now(),
+        ),
+      );
+    });
+
+    tearDownAll(() async {
+      await _server.close();
+      await _store.db.close();
+    });
+
+    test('rejects write without token', () async {
+      var res = await addUploaderHttp(package0, email1);
+      expect(res.statusCode, HttpStatus.unauthorized);
+    });
+
+    test('rejects write with wrong token', () async {
+      var res = await addUploaderHttp(package0, email1, token: 'wrong');
+      expect(res.statusCode, HttpStatus.unauthorized);
+    });
+
+    test('allows write with correct token', () async {
+      var res = await addUploaderHttp(package0, email1, token: token);
+      expect(res.statusCode, HttpStatus.ok);
+    });
+
+    test('allows remove with correct token', () async {
+      var res = await removeUploaderHttp(package0, email1, token: token);
+      expect(res.statusCode, HttpStatus.ok);
+    });
+
+    test('read operations work without token', () async {
+      var res = await getVersions(package0);
+      expect(res.statusCode, HttpStatus.ok);
+    });
+  });
+
   group('badge', () {
     setUpAll(() async {
       var result = await createServer(email0);

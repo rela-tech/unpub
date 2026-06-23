@@ -22,6 +22,11 @@ main(List<String> args) async {
       abbr: 'u',
       defaultsTo: '',
       help: 'Override uploader email. When set, Google OAuth is skipped.');
+  parser.addOption('upload-token',
+      abbr: 'k',
+      defaultsTo: '',
+      help: 'Token required for publish/uploader operations. '
+          'Set with: dart pub token add <host>');
 
   var results = parser.parse(args);
 
@@ -31,6 +36,7 @@ main(List<String> args) async {
   var databaseUri = results['database'] as String;
   var proxyOrigin = results['proxy-origin'] as String;
   var uploaderEmail = results['uploader-email'] as String;
+  var uploadToken = results['upload-token'] as String;
 
   if (results.rest.isNotEmpty) {
     print('Got unexpected arguments: "${results.rest.join(' ')}".\n\nUsage:\n');
@@ -54,6 +60,7 @@ main(List<String> args) async {
     packageStore: unpub.FileStore(baseDir),
     proxy_origin: proxyOrigin.trim().isEmpty ? null : Uri.parse(proxyOrigin),
     overrideUploaderEmail: uploaderEmail.trim().isEmpty ? null : uploaderEmail.trim(),
+    uploadToken: uploadToken.trim().isEmpty ? null : uploadToken.trim(),
   );
 
   var server = await app.serve(host, port);

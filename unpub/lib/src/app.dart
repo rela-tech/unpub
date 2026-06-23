@@ -41,6 +41,11 @@ class App {
   /// A forward proxy uri
   final Uri? proxy_origin;
 
+  /// Upload token for write operations (publish, add/remove uploader).
+  /// When set, clients must send `Authorization: Bearer <uploadToken>`.
+  /// Requires [overrideUploaderEmail] to also be set (skips Google OAuth).
+  final String? uploadToken;
+
   /// validate if the package can be published
   ///
   /// for more details, see: https://github.com/bytedance/unpub#package-validator
@@ -55,6 +60,7 @@ class App {
     this.overrideUploaderEmail,
     this.uploadValidator,
     this.proxy_origin,
+    this.uploadToken,
   });
 
   static shelf.Response _okWithJson(Map<String, dynamic> data) =>
@@ -94,11 +100,22 @@ class App {
   }
 
   Future<String> _getUploaderEmail(shelf.Request req) async {
+    var authHeader = req.headers[HttpHeaders.authorizationHeader];
+
+    // If uploadToken is configured, require Bearer token match.
+    // `dart pub token add <host>` will auto-send this header on publish.
+    if (uploadToken != null) {
+      if (authHeader == null) throw 'unauthorized: missing upload token';
+      var token = authHeader.split(' ').last;
+      if (token != uploadToken) throw 'unauthorized: invalid upload token';
+      return overrideUploaderEmail ?? 'unknown';
+    }
+
+    // With overrideUploaderEmail but no uploadToken, skip auth entirely.
     if (overrideUploaderEmail != null) return overrideUploaderEmail!;
 
-    var authHeader = req.headers[HttpHeaders.authorizationHeader];
+    // Otherwise, treat the token as a Google OAuth access token.
     if (authHeader == null) throw 'missing authorization header';
-
     var token = authHeader.split(' ').last;
 
     if (_googleapisClient == null) {
@@ -359,39 +376,55 @@ class App {
 
   @Route.post('/api/packages/<name>/uploaders')
   Future<shelf.Response> addUploader(shelf.Request req, String name) async {
-    var body = await req.readAsString();
-    var email = Uri.splitQueryString(body)['email']!; // TODO: null
-    var operatorEmail = await _getUploaderEmail(req);
-    var package = await metaStore.queryPackage(name);
+    try {
+      var body = await req.readAsString();
+      var email = Uri.splitQueryString(body)['email']!; // TODO: null
+      var operatorEmail = await _getUploaderEmail(req);
+      var package = await metaStore.queryPackage(name);
 
-    if (package?.uploaders?.contains(operatorEmail) == false) {
-      return _badRequest('no permission', status: HttpStatus.forbidden);
-    }
-    if (package?.uploaders?.contains(email) == true) {
-      return _badRequest('email already exists');
-    }
+      if (package?.uploaders?.contains(operatorEmail) == false) {
+        return _badRequest('no permission', status: HttpStatus.forbidden);
+      }
+      if (package?.uploaders?.contains(email) == true) {
+        return _badRequest('email already exists');
+      }
 
-    await metaStore.addUploader(name, email);
-    return _successMessage('uploader added');
+      await metaStore.addUploader(name, email);
+      return _successMessage('uploader added');
+    } catch (err) {
+      final msg = err.toString();
+      if (msg.startsWith('unauthorized')) {
+        return _badRequest(msg, status: HttpStatus.unauthorized);
+      }
+      return _badRequest(msg);
+    }
   }
 
   @Route.delete('/api/packages/<name>/uploaders/<email>')
   Future<shelf.Response> removeUploader(
       shelf.Request req, String name, String email) async {
-    email = Uri.decodeComponent(email);
-    var operatorEmail = await _getUploaderEmail(req);
-    var package = await metaStore.queryPackage(name);
+    try {
+      email = Uri.decodeComponent(email);
+      var operatorEmail = await _getUploaderEmail(req);
+      var package = await metaStore.queryPackage(name);
 
-    // TODO: null
-    if (package?.uploaders?.contains(operatorEmail) == false) {
-      return _badRequest('no permission', status: HttpStatus.forbidden);
-    }
-    if (package?.uploaders?.contains(email) == false) {
-      return _badRequest('email not uploader');
-    }
+      // TODO: null
+      if (package?.uploaders?.contains(operatorEmail) == false) {
+        return _badRequest('no permission', status: HttpStatus.forbidden);
+      }
+      if (package?.uploaders?.contains(email) == false) {
+        return _badRequest('email not uploader');
+      }
 
-    await metaStore.removeUploader(name, email);
-    return _successMessage('uploader removed');
+      await metaStore.removeUploader(name, email);
+      return _successMessage('uploader removed');
+    } catch (err) {
+      final msg = err.toString();
+      if (msg.startsWith('unauthorized')) {
+        return _badRequest(msg, status: HttpStatus.unauthorized);
+      }
+      return _badRequest(msg);
+    }
   }
 
   @Route.get('/webapi/packages')

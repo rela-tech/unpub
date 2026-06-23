@@ -39,6 +39,9 @@ That's it! Unpub will create an `unpub.db` SQLite database and an `unpub-package
 --database-type, -t      Database type: sqlite (default) or mongo
 --database, -d           SQLite file path or MongoDB connection URI
                          (default: unpub.db)
+--uploader-email, -u     Uploader email (skips Google OAuth)
+--upload-token, -k       Token required for publish/uploader operations
+                         Clients must send `Authorization: Bearer <token>`
 --proxy-origin, -o       Reverse proxy origin URL
 ```
 
@@ -51,12 +54,49 @@ unpub
 # Custom SQLite path and port
 unpub --database /data/unpub.db --port 8080
 
+# With uploader email and token (recommended for public deployment)
+unpub --uploader-email "you@example.com" --upload-token "secret123"
+
 # Use MongoDB instead (backward compatible)
 unpub --database-type mongo --database mongodb://localhost:27017/dart_pub
 
 # Behind a reverse proxy
 unpub --proxy-origin https://pub.example.com
 ```
+
+### Authentication
+
+For public deployments, configure an upload token to protect write operations:
+
+```sh
+# Server side
+unpub --uploader-email "you@example.com" --upload-token "supersecret"
+```
+
+On each client that needs to publish:
+
+```sh
+# Client side — store the token (publish will use it automatically)
+dart pub token add http://your-unpub-host:4000
+# Paste: supersecret
+
+# Then publish as usual
+dart pub publish
+```
+
+How it works:
+- Read operations (dependency resolution, downloads) — **no token required**
+- Write operations (publish, add/remove uploader) — `Authorization: Bearer <token>` required
+- `dart pub token add` configures the Dart client to auto-send this header
+- With `--upload-token` set, Google OAuth is fully bypassed
+
+### Without token (local development)
+
+```sh
+unpub --uploader-email "dev@localhost"
+```
+
+No token required — all writes are accepted from any client. Use only in trusted environments.
 
 ## Database
 
