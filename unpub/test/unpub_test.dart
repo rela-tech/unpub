@@ -5,23 +5,51 @@ import 'package:unpub/src/utils.dart';
 import 'package:test/test.dart';
 import 'package:path/path.dart' as path;
 import 'package:http/http.dart' as http;
-import 'package:mongo_dart/mongo_dart.dart';
 import 'utils.dart';
 import 'package:unpub/unpub.dart';
 
 main() {
-  Db _db = Db('mongodb://localhost:27017/dart_pub_test');
   late HttpServer _server;
-
-  setUpAll(() async {
-    await _db.open();
-  });
+  late SqliteStore _store;
 
   Future<Map<String, dynamic>> _readMeta(String name) async {
-    var res =
-        await _db.collection(packageCollection).findOne(where.eq('name', name));
-    res!.remove('_id'); // TODO: null
-    return res;
+    final result = await _store.db.rawQuery(
+      'SELECT * FROM packages WHERE name = ?',
+      [name],
+    );
+    if (result.isEmpty) throw 'package $name not found';
+
+    final pkg = result.first;
+    final versions = await _store.db.rawQuery(
+      'SELECT * FROM versions WHERE package_name = ? ORDER BY created_at',
+      [name],
+    );
+    final uploaders = await _store.db.rawQuery(
+      'SELECT email FROM uploaders WHERE package_name = ?',
+      [name],
+    );
+
+    return {
+      'name': pkg['name'],
+      'private': pkg['private'] == 1,
+      'download': pkg['download'],
+      'createdAt': DateTime.parse(pkg['created_at'] as String),
+      'updatedAt': DateTime.parse(pkg['updated_at'] as String),
+      'uploaders': uploaders.map((u) => u['email']).toList(),
+      'versions': versions.map((v) {
+        var item = <String, dynamic>{
+          'version': v['version'],
+          'pubspecYaml': v['pubspec_yaml'],
+          'pubspec': json.decode(v['pubspec'] as String),
+          'uploader': v['uploader'],
+          'createdAt': DateTime.parse(v['created_at'] as String),
+        };
+        // Only include optional fields if present (matching old MongoDB behavior)
+        if (v['readme'] != null) item['readme'] = v['readme'];
+        if (v['changelog'] != null) item['changelog'] = v['changelog'];
+        return item;
+      }).toList(),
+    };
   }
 
   Map<String, String> _pubspecCache = {};
@@ -36,23 +64,16 @@ main() {
     return _pubspecCache[key];
   }
 
-  _cleanUpDb() async {
-    await _db.dropCollection(packageCollection);
-    await _db.dropCollection(statsCollection);
-  }
-
-  tearDownAll(() async {
-    await _db.close();
-  });
-
   group('publish', () {
     setUpAll(() async {
-      await _cleanUpDb();
-      _server = await createServer(email0);
+      var result = await createServer(email0);
+      _server = result.$1;
+      _store = result.$2;
     });
 
     tearDownAll(() async {
       await _server.close();
+      await _store.db.close();
     });
 
     test('fresh', () async {
@@ -141,14 +162,16 @@ main() {
 
   group('get versions', () {
     setUpAll(() async {
-      await _cleanUpDb();
-      _server = await createServer(email0);
+      var result = await createServer(email0);
+      _server = result.$1;
+      _store = result.$2;
       await pubPublish(package0, '0.0.1');
       await pubPublish(package0, '0.0.2');
     });
 
     tearDownAll(() async {
       await _server.close();
+      await _store.db.close();
     });
 
     test('existing at local', () async {
@@ -204,14 +227,16 @@ main() {
 
   group('get specific version', () {
     setUpAll(() async {
-      await _cleanUpDb();
-      _server = await createServer(email0);
+      var result = await createServer(email0);
+      _server = result.$1;
+      _store = result.$2;
       await pubPublish(package0, '0.0.1');
       await pubPublish(package0, '0.0.3+1');
     });
 
     tearDownAll(() async {
       await _server.close();
+      await _store.db.close();
     });
 
     test('existing at local', () async {
@@ -269,33 +294,36 @@ main() {
 
   group('uploader', () {
     setUpAll(() async {
-      await _cleanUpDb();
-      _server = await createServer(email0);
+      var result = await createServer(email0);
+      _server = result.$1;
+      _store = result.$2;
       await pubPublish(package0, '0.0.1');
     });
 
     tearDownAll(() async {
       await _server.close();
+      await _store.db.close();
     });
 
     group('add', () {
       test('already exists', () async {
-        var result = await pubUploader(package0, 'add', email0);
-        expect(result.stderr, contains('email already exists'));
+        var res = await addUploaderHttp(package0, email0);
+        expect(res.statusCode, HttpStatus.badRequest);
+        expect(res.body, contains('email already exists'));
 
         var meta = await _readMeta(package0);
         expect(meta['uploaders'], unorderedEquals([email0]));
       });
 
       test('success', () async {
-        var result = await pubUploader(package0, 'add', email1);
-        expect(result.stderr, '');
+        var res = await addUploaderHttp(package0, email1);
+        expect(res.statusCode, HttpStatus.ok);
 
         var meta = await _readMeta(package0);
         expect(meta['uploaders'], unorderedEquals([email0, email1]));
 
-        result = await pubUploader(package0, 'add', email2);
-        expect(result.stderr, '');
+        res = await addUploaderHttp(package0, email2);
+        expect(res.statusCode, HttpStatus.ok);
 
         meta = await _readMeta(package0);
         expect(meta['uploaders'], unorderedEquals([email0, email1, email2]));
@@ -304,22 +332,27 @@ main() {
 
     group('remove', () {
       test('not in uploader', () async {
-        var result = await pubUploader(package0, 'remove', email3);
-        expect(result.stderr, contains('email not uploader'));
+        // First add email1, email2
+        await _store.addUploader(package0, email1);
+        await _store.addUploader(package0, email2);
+
+        var res = await removeUploaderHttp(package0, email3);
+        expect(res.statusCode, HttpStatus.badRequest);
+        expect(res.body, contains('email not uploader'));
 
         var meta = await _readMeta(package0);
         expect(meta['uploaders'], unorderedEquals([email0, email1, email2]));
       });
 
       test('success', () async {
-        var result = await pubUploader(package0, 'remove', email2);
-        expect(result.stderr, '');
+        var res = await removeUploaderHttp(package0, email2);
+        expect(res.statusCode, HttpStatus.ok);
 
         var meta = await _readMeta(package0);
         expect(meta['uploaders'], unorderedEquals([email0, email1]));
 
-        result = await pubUploader(package0, 'remove', email1);
-        expect(result.stderr, '');
+        res = await removeUploaderHttp(package0, email1);
+        expect(res.statusCode, HttpStatus.ok);
 
         meta = await _readMeta(package0);
         expect(meta['uploaders'], unorderedEquals([email0]));
@@ -329,34 +362,54 @@ main() {
     group('permission', () {
       setUpAll(() async {
         await _server.close();
-        _server = await createServer(email1);
+        await _store.db.close();
+        var result = await createServer(email1);
+        _server = result.$1;
+        _store = result.$2;
+        // Manually insert the package with email0 as uploader
+        // (so email1 operator is NOT an uploader → permission denied)
+        await _store.addVersion(
+          package0,
+          UnpubVersion(
+            '0.0.1',
+            {'name': package0, 'version': '0.0.1'},
+            null,
+            email0,
+            null,
+            null,
+            DateTime.now(),
+          ),
+        );
       });
 
       tearDownAll(() async {
         await _server.close();
+        await _store.db.close();
       });
 
       test('add', () async {
-        var result = await pubUploader(package0, 'add', email0);
-        expect(result.stderr, contains('no permission'));
+        var res = await addUploaderHttp(package0, email0);
+        expect(res.statusCode, HttpStatus.forbidden);
       });
 
       test('remove', () async {
-        var result = await pubUploader(package0, 'remove', email0);
-        expect(result.stderr, contains('no permission'));
+        var res = await removeUploaderHttp(package0, email0);
+        expect(res.statusCode, HttpStatus.forbidden);
       });
     });
   });
 
   group('badge', () {
     setUpAll(() async {
-      await _cleanUpDb();
-      _server = await createServer(email0);
+      var result = await createServer(email0);
+      _server = result.$1;
+      _store = result.$2;
       await pubPublish(package0, '0.0.1');
     });
 
     tearDownAll(() async {
       await _server.close();
+      await _store.db.close();
     });
 
     group('v', () {

@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 import 'package:http/http.dart' as http;
 import 'package:unpub/unpub.dart' as unpub;
-import 'package:mongo_dart/mongo_dart.dart';
 
 final notExistingPacakge = 'not_existing_package';
 final baseDir = path.absolute('unpub-packages');
@@ -16,19 +15,17 @@ final email1 = 'email1@example.com';
 final email2 = 'email2@example.com';
 final email3 = 'email3@example.com';
 
-createServer(String opEmail) async {
-  final db = Db('mongodb://localhost:27017/dart_pub_test');
-  await db.open();
-  var mongoStore = unpub.MongoStore(db);
+Future<(HttpServer, unpub.SqliteStore)> createServer(String opEmail) async {
+  var sqliteStore = await unpub.SqliteStore.open(':memory:');
 
   var app = unpub.App(
-    metaStore: mongoStore,
+    metaStore: sqliteStore,
     packageStore: unpub.FileStore(baseDir),
     overrideUploaderEmail: opEmail,
   );
 
   var server = await app.serve('0.0.0.0', 4000);
-  return server;
+  return (server, sqliteStore);
 }
 
 Future<http.Response> getVersions(String package) {
@@ -48,10 +45,17 @@ Future<ProcessResult> pubPublish(String name, String version) {
       environment: {'PUB_HOSTED_URL': pubHostedUrl});
 }
 
-Future<ProcessResult> pubUploader(String name, String operation, String email) {
-  assert(['add', 'remove'].contains(operation), 'operation error');
+/// Add an uploader via the HTTP API directly.
+Future<http.Response> addUploaderHttp(String name, String email) {
+  return http.post(
+    baseUri.resolve('/api/packages/$name/uploaders'),
+    body: 'email=$email',
+  );
+}
 
-  return Process.run('dart', ['pub', 'uploader', operation, email],
-      workingDirectory: path.absolute('test/fixtures', name, '0.0.1'),
-      environment: {'PUB_HOSTED_URL': pubHostedUrl});
+/// Remove an uploader via the HTTP API directly.
+Future<http.Response> removeUploaderHttp(String name, String email) {
+  return http.delete(
+    baseUri.resolve('/api/packages/$name/uploaders/${Uri.encodeComponent(email)}'),
+  );
 }

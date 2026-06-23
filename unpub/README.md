@@ -8,31 +8,129 @@ Unpub is a self-hosted private Dart Pub server for Enterprise, with a simple web
 
 ![Screenshot](https://raw.githubusercontent.com/bytedance/unpub/master/assets/screenshot.png)
 
-## Usage
+## Quick Start
 
-### Command Line
+### Prerequisites
+
+- Dart SDK >= 3.0.0
+
+### Installation
 
 ```sh
-pub global activate unpub
-unpub --database mongodb://localhost:27017/dart_pub # Replace this with production database uri
+dart pub global activate unpub
 ```
 
-Unpub use mongodb as meta information store and file system as package(tarball) store by default.
+### Run
 
-Dart API is also available for further customization.
+Unpub now uses **SQLite** as the default metadata store — no external database required.
 
-### Dart API
+```sh
+# Start with SQLite (default)
+unpub
+```
+
+That's it! Unpub will create an `unpub.db` SQLite database and an `unpub-packages` directory for package tarballs.
+
+### Options
+
+```
+--host, -h               Listen address (default: 0.0.0.0)
+--port, -p               Listen port (default: 4000)
+--database-type, -t      Database type: sqlite (default) or mongo
+--database, -d           SQLite file path or MongoDB connection URI
+                         (default: unpub.db)
+--proxy-origin, -o       Reverse proxy origin URL
+```
+
+**Examples:**
+
+```sh
+# Start with defaults (SQLite on port 4000)
+unpub
+
+# Custom SQLite path and port
+unpub --database /data/unpub.db --port 8080
+
+# Use MongoDB instead (backward compatible)
+unpub --database-type mongo --database mongodb://localhost:27017/dart_pub
+
+# Behind a reverse proxy
+unpub --proxy-origin https://pub.example.com
+```
+
+## Database
+
+### SQLite (Default)
+
+No external database required. Unpub creates a single-file SQLite database.
+
+```sh
+unpub --database unpub.db
+```
+
+### MongoDB (Legacy)
+
+Still supported via `--database-type mongo`:
+
+```sh
+unpub --database-type mongo --database mongodb://localhost:27017/dart_pub
+```
+
+### Migrating from MongoDB to SQLite
+
+If you have an existing MongoDB deployment and want to switch to SQLite:
+
+```sh
+# Run the migration tool
+dart run tool/migrate.dart \
+  --mongo mongodb://localhost:27017/dart_pub \
+  --sqlite unpub.db
+
+# Then start unpub with the migrated database
+unpub --database unpub.db
+```
+
+The migration tool reads all packages, versions, uploaders and download counts from MongoDB and writes them to a new SQLite database. The original MongoDB data is **not** modified.
+
+You can also run it from source:
+
+```sh
+cd unpub
+dart pub get
+dart run tool/migrate.dart --mongo mongodb://localhost:27017/dart_pub --sqlite /path/to/unpub.db
+```
+
+## Configuring Dart Pub Client
+
+Set the `PUB_HOSTED_URL` environment variable in your shell profile (`.bashrc`, `.zshrc`, or `config.fish`):
+
+```sh
+export PUB_HOSTED_URL=http://localhost:4000
+```
+
+Then use `dart pub publish` as usual:
+
+```sh
+cd my_package
+dart pub publish
+```
+
+## Dart API
 
 ```dart
-import 'package:mongo_dart/mongo_dart.dart';
 import 'package:unpub/unpub.dart' as unpub;
 
-main(List<String> args) async {
-  final db = Db('mongodb://localhost:27017/dart_pub');
-  await db.open(); // make sure the MongoDB connection opened
+Future<void> main(List<String> args) async {
+  // Use SQLite
+  final metaStore = await unpub.SqliteStore.open('unpub.db');
+
+  // Or use MongoDB
+  // final db = Db('mongodb://localhost:27017/dart_pub');
+  // await db.open();
+  // final metaStore = unpub.MongoStore(db);
 
   final app = unpub.App(
-    metaStore: unpub.MongoStore(db),
+    metaStore: metaStore,
     packageStore: unpub.FileStore('./unpub-packages'),
   );
 
@@ -50,7 +148,6 @@ main(List<String> args) async {
 | `upstream` | Upstream url | https://pub.dev |
 | `googleapisProxy` | Http(s) proxy to call googleapis (to get uploader email) | - |
 | `uploadValidator` | See [Package validator](#package-validator) | - |
-
 
 ### Usage behind reverse-proxy
 
@@ -126,6 +223,23 @@ var app = unpub.App(
 | --- | --- |
 | `/badge/v/{package_name}` | ![badge example](https://img.shields.io/static/v1?label=unpub&message=0.1.0&color=orange) ![badge example](https://img.shields.io/static/v1?label=unpub&message=1.0.0&color=blue) |
 | `/badge/d/{package_name}` | ![badge example](https://img.shields.io/static/v1?label=downloads&message=123&color=blue) |
+
+## Development
+
+```sh
+# Run tests (no external dependencies required)
+cd unpub
+dart pub get
+dart test
+
+# Start locally for manual testing
+dart run bin/unpub.dart
+
+# In another terminal, set PUB_HOSTED_URL and publish a test package
+export PUB_HOSTED_URL=http://localhost:4000
+cd test/fixtures/package_0/0.0.1
+dart pub publish
+```
 
 ## Alternatives
 

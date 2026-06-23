@@ -8,16 +8,29 @@ main(List<String> args) async {
   var parser = ArgParser();
   parser.addOption('host', abbr: 'h', defaultsTo: '0.0.0.0');
   parser.addOption('port', abbr: 'p', defaultsTo: '4000');
+  parser.addOption('database-type',
+      abbr: 't',
+      defaultsTo: 'sqlite',
+      allowedHelp: {
+        'sqlite': 'Use SQLite as metadata store (default)',
+        'mongo': 'Use MongoDB as metadata store',
+      });
   parser.addOption('database',
-      abbr: 'd', defaultsTo: 'mongodb://localhost:27017/dart_pub');
+      abbr: 'd', defaultsTo: 'unpub.db');
   parser.addOption('proxy-origin', abbr: 'o', defaultsTo: '');
+  parser.addOption('uploader-email',
+      abbr: 'u',
+      defaultsTo: '',
+      help: 'Override uploader email. When set, Google OAuth is skipped.');
 
   var results = parser.parse(args);
 
   var host = results['host'] as String;
   var port = int.parse(results['port'] as String);
-  var dbUri = results['database'] as String;
-  var proxy_origin = results['proxy-origin'] as String;
+  var databaseType = results['database-type'] as String;
+  var databaseUri = results['database'] as String;
+  var proxyOrigin = results['proxy-origin'] as String;
+  var uploaderEmail = results['uploader-email'] as String;
 
   if (results.rest.isNotEmpty) {
     print('Got unexpected arguments: "${results.rest.join(' ')}".\n\nUsage:\n');
@@ -25,15 +38,22 @@ main(List<String> args) async {
     exit(1);
   }
 
-  final db = Db(dbUri);
-  await db.open();
+  unpub.MetaStore metaStore;
+  if (databaseType == 'mongo') {
+    final db = Db(databaseUri);
+    await db.open();
+    metaStore = unpub.MongoStore(db);
+  } else {
+    metaStore = await unpub.SqliteStore.open(databaseUri);
+  }
 
   var baseDir = path.absolute('unpub-packages');
 
   var app = unpub.App(
-    metaStore: unpub.MongoStore(db),
+    metaStore: metaStore,
     packageStore: unpub.FileStore(baseDir),
-    proxy_origin: proxy_origin.trim().isEmpty ? null : Uri.parse(proxy_origin)
+    proxy_origin: proxyOrigin.trim().isEmpty ? null : Uri.parse(proxyOrigin),
+    overrideUploaderEmail: uploaderEmail.trim().isEmpty ? null : uploaderEmail.trim(),
   );
 
   var server = await app.serve(host, port);
