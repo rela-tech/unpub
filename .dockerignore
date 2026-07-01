@@ -1,0 +1,9 @@
+unpub/.dart_tool/
+unpub/build/
+unpub/.packages
+unpub/pubspec.lock
+node_modules/
+.git
+.gitignore
+.DS_Store
+*.log

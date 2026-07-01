@@ -1,0 +1,12 @@
+# Build stage: compile unpub binary
+FROM dart:3.11-slim AS builder
+WORKDIR /app
+COPY unpub/ .
+RUN dart pub get && \
+    dart compile exe bin/unpub.dart -o unpub
+
+# Runtime stage: minimal scratch image
+FROM scratch
+COPY --from=builder /app/unpub /usr/local/bin/unpub
+EXPOSE 4000
+ENTRYPOINT ["/usr/local/bin/unpub"]
